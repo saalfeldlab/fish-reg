@@ -1,0 +1,11 @@
+#!/bin/bash
+
+BASEDIR=$(dirname "$0")
+
+cp=$(readlink -f "$BASEDIR/../target/fish-reg-jar-with-dependencies.jar")
+echo $cp
+
+#cp="$BASEDIR/classpath.cp"
+
+java -cp "$cp" -Xmx8g org.janelia.saalfeldlab.vis.KDTreeRendererZarr $@
+
