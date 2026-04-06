@@ -196,8 +196,7 @@ public class MultiHypothesisZarr implements Runnable {
 		System.out.println("apply transform to points");
 		TransformPointsZarr tf = new TransformPointsZarr();
 		tf.landmarksArg  = allLandmarksFile;
-//		tf.transformType = BigWarpTransform.TPS;
-		tf.transformType = BigWarpTransform.TRANSLATION;
+		tf.transformType = BigWarpTransform.TPS;
 		tf.zarrPath = mvgZarrPath;
 		tf.outputZarrPath = transformedPointsPath;
 		tf.run();
