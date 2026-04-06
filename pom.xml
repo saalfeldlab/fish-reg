@@ -88,10 +88,8 @@
 		<license.projectName>Mirror microscope tools</license.projectName>
 		<license.excludes>**/resources/*.xml</license.excludes>
 
-		<imglib2-realtransform.version>4.0.5-distortion</imglib2-realtransform.version>
+		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
 		<bigdataviewer-vistools.version>1.0.0-beta-36</bigdataviewer-vistools.version>
-
-<!--		<n5-universe.version>1.6.0</n5-universe.version>-->
 
 		<!-- NB: Deploy releases to the SciJava Maven repository. -->
 		<releaseProfiles>sign,deploy-to-scijava</releaseProfiles>
