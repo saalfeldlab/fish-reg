@@ -35,31 +35,36 @@ import net.imglib2.util.Intervals;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
+@CommandLine.Command(
+	name = "TransformPointsZarr",
+	mixinStandardHelpOptions = true,
+	description = "Applies a spatial transform to a set of 3D points stored in a Zarr array and writes the result to a new Zarr array. The transform may be specified as a 3x4 affine matrix or as a BigWarp landmarks file (supporting thin plate spline and other transform types)."
+)
 public class TransformPointsZarr implements Runnable {
 
 	@Option( names = { "-i", "--zarr-points" }, required = true,
 			description = "Path to the input Zarr array of 3D points (shape: [3, N])." )
-	String zarrPath;
+	public String zarrPath;
 
 	@Option( names = { "-a", "--affine" }, required = false,
 			description = "Affine transform as 12 comma-separated values (row-major 3x4 matrix). Mutually exclusive with --landmarks." )
-	String affineTransformArg;
+	public String affineTransformArg;
 
 	@Option( names = { "-l", "--landmarks" }, required = false,
 			description = "Path to a BigWarp landmarks CSV file defining a transform. Mutually exclusive with --affine." )
-	File landmarksArg;
+	public File landmarksArg;
 
 	@Option( names = { "-t", "--type" }, required = false,
 			description = "Transform type to derive from the landmarks (e.g. 'Thin Plate Spline', 'Affine'). Only used with --landmarks." )
-	String transformType;
+	public String transformType;
 
 	@Option( names = { "--inv"}, required = false,
 			description = "Invert the transform before applying it." )
-	boolean invert;
+	public boolean invert;
 
 	@Option( names = { "-o", "--output" }, required = true,
 			description = "Path for the output Zarr array of transformed 3D points." )
-	String outputZarrPath;
+	public String outputZarrPath;
 
 	public static void main(String[] args) {
 		int exitCode = new CommandLine(new TransformPointsZarr()).execute(args);

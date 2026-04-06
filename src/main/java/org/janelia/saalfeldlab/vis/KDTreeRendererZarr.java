@@ -46,31 +46,31 @@ public class KDTreeRendererZarr<T extends RealType<T>,P extends RealLocalizable>
 {
 
 	@Option(names = {"-i", "--input"}, required = true, description = "Input point ")
-	private String input;
+	public String input;
 
 	@Option(names = {"-o", "--output"}, required = false, description = "Output image path")
-	private String output;
+	public String output;
 
 	@Option(names = {"-p", "--psf-radius"}, required = true, description = "Radius for synapse point spread function")
-	private double radius;
+	public double radius;
 
-	@Option(names = {"-r", "--output-resolution"}, required = true, description = "Resolution of output image")
-	private String resolution;
+	@Option(names = {"-r", "--output-resolution"}, required = false, description = "Resolution of output image")
+	public String resolution;
 
 	@Option(names = {"-ir", "--input-resolution"}, required = false, description = "Resolution of input points")
-	private String inputResolution;
+	public String inputResolution;
 	
 	@Option(names = {"-fz", "--flip-z"}, required = false, description = "Whether to flip the z dimension for each input path")
-	private String flipZArg;
+	public String flipZArg;
 
 	@Option(names = {"-s", "--size"}, required = false, description = "Output image size")
-	private String sizeString;
+	public String sizeString;
 
 	@Option(names = {"-a", "--affine"}, required = false, description = "Affine applied to first set of points")
-	private String affineArg;
+	public String affineArg;
 
 	@Option(names = {"-q", "--nThreads"}, required = false, description = "Number of threads")
-	private int nThreads = 10;
+	public int nThreads = 10;
 
 	private double searchDist;
 
@@ -82,8 +82,10 @@ public class KDTreeRendererZarr<T extends RealType<T>,P extends RealLocalizable>
 	
 	public static void main(String[] args) throws ImgLibException, IOException {
 
-		int exitCode = new CommandLine(new KDTreeRendererZarr()).execute(args);
-//		System.exit(exitCode);
+		KDTreeRendererZarr inst = new KDTreeRendererZarr();
+		int exitCode = new CommandLine(inst).execute(args);
+		if (inst.output != null)
+			System.exit(exitCode);
 	}
 
 	public KDTreeRendererZarr() { }
@@ -152,7 +154,11 @@ public class KDTreeRendererZarr<T extends RealType<T>,P extends RealLocalizable>
 		final Interval itvl = boundingMaxInterval(pts);
 		System.out.println(Intervals.toString(itvl));
 		
-		final double[] res = Arrays.stream(resolution.split( "," ) ).mapToDouble( Double::parseDouble ).toArray();
+		double[] res;
+		if( resolution == null )
+			res = new double[]{1, 1, 1};
+		else
+			res = Arrays.stream(resolution.split(",")).mapToDouble(Double::parseDouble).toArray();
 
 		final Scale inputScale;
 		if (inputResolution == null) {
@@ -190,7 +196,11 @@ public class KDTreeRendererZarr<T extends RealType<T>,P extends RealLocalizable>
 		final Interval itvl = boundingMaxInterval(pts);
 		System.out.println(Intervals.toString(itvl));
 		
-		final double[] res = Arrays.stream( resolution.split( "," ) ).mapToDouble( Double::parseDouble ).toArray();
+		double[] res;
+		if (resolution == null)
+			res = new double[]{1, 1, 1};
+		else
+			res = Arrays.stream(resolution.split(",")).mapToDouble(Double::parseDouble).toArray();
 
 		final Scale inputScale;
 		if (inputResolution == null) {
@@ -206,7 +216,6 @@ public class KDTreeRendererZarr<T extends RealType<T>,P extends RealLocalizable>
 
 		System.out.println("radius: " + radius);
 		// build renderer
-		
 		KDTreeRendererZarr< UnsignedShortType, RealPoint > treeRenderer = new KDTreeRendererZarr< UnsignedShortType, RealPoint >( 
 				vals, pts, radius );
 
@@ -356,7 +365,7 @@ public class KDTreeRendererZarr<T extends RealType<T>,P extends RealLocalizable>
 
 		final int nd = (int)pointImg.dimension(DIM);
 		final int N = (int)pointImg.dimension(IDX);
-		System.out.println(Intervals.toString(pointImg));
+		System.out.println("points: " + Intervals.toString(pointImg));
 		
 		ArrayList<RealPoint> points = new ArrayList<>();
 		for( int i = 0; i < N; i+= subsamplingFactor ) {
