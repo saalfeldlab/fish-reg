@@ -9,15 +9,15 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.janelia.saalfeldlab.analysis.Stats;
-import org.janelia.saalfeldlab.io.InterestPointsToCsv;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+import org.janelia.saalfeldlab.points.TransformPointsZarr;
+import org.janelia.saalfeldlab.vis.KDTreeRendererZarr;
 import org.janelia.saalfeldlab.vis.PointPlotter;
 
 import mpicbg.models.AbstractAffineModel3D;
@@ -45,9 +45,17 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMMatcher;
 import bigwarp.landmarks.LandmarkTableModel;
+import bigwarp.transforms.BigWarpTransform;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
+@CommandLine.Command(
+	name = "MultiHypothesisZarr",
+	mixinStandardHelpOptions = true,
+	description = "Registers two sets of 3D points stored in Zarr arrays by finding point correspondences using geometric descriptor matching (RGLDC) and iterative RANSAC."
+			+ " Extracts multiple independent consensus sets (multi-hypothesis), fitting a separate transform model to each, and writes the resulting models,"
+			+ " inlier correspondences, error statistics, and BigWarp landmark files to disk."
+)
 public class MultiHypothesisZarr implements Runnable {
 	
 	static String TRANSLATION = "translation";
@@ -98,10 +106,25 @@ public class MultiHypothesisZarr implements Runnable {
 
 	@Option( names = { "--min-inlier-ratio" }, required = false )
 	double minInlierRatio = 0.1;
-	
+
+	@Option( names = { "--apply" }, required = false )
+	boolean applyToPoints;
+
+	@Option( names = { "--render" }, required = false )
+	boolean render;
+
+	@Option( names = { "--vis-points" }, required = false )
+	boolean visPoints;
+
 	@Option( names = { "--image-orientation" }, required = false )
 	String imageOrientation = "XY";
 
+	File allLandmarksFile;
+	String transformedPointsPath;
+
+	String renderedImagePath;
+
+	String pointImgPath;
 
 	public static void main(String[] args) {
 		int exitCode = new CommandLine(new MultiHypothesisZarr()).execute(args);
@@ -167,41 +190,27 @@ public class MultiHypothesisZarr implements Runnable {
 	public void makeBaseDir() {
 		new File(baseDestination).getParentFile().mkdirs();
 	}
-
-	public static void writeBigWarpLandmarks( File f, ArrayList<PointMatchGeneric<InterestPoint>> inliers ) {
-
-		final LandmarkTableModel ltm = new LandmarkTableModel( 3 );
-		for( final PointMatchGeneric<InterestPoint> match : inliers ) {
-			ltm.add( match.getPoint1().getL(), match.getPoint2().getL() );
-		}
-		try {
-			ltm.save( f );
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-	}
 	
-	static List<InterestPoint> apply(List<InterestPoint> pts, Function<InterestPoint,InterestPoint> f)  {
-		
-		ArrayList<InterestPoint> tpts = new ArrayList<InterestPoint>();
-		for (InterestPoint pt : pts)
-			tpts.add(translate(pt));
+	public void applyToPoints() {
 
-		return tpts;
-	}
-	
-	static InterestPoint floor(InterestPoint pt) {
-		final double[] pos = new double[pt.numDimensions()];
-		for( int i = 0; i < pt.numDimensions(); i++)
-			pos[i] = Math.floor(pt.getDoublePosition(i));
-
-		return new InterestPoint(pt.getId(), pos);
+		System.out.println("apply transform to points");
+		TransformPointsZarr tf = new TransformPointsZarr();
+		tf.landmarksArg  = allLandmarksFile;
+//		tf.transformType = BigWarpTransform.TPS;
+		tf.transformType = BigWarpTransform.TRANSLATION;
+		tf.zarrPath = mvgZarrPath;
+		tf.outputZarrPath = transformedPointsPath;
+		tf.run();
 	}
 
-	static InterestPoint translate(InterestPoint pt) {
-		final double[] pos = new double[pt.numDimensions()];
-		pt.localize(pos);
-		return new InterestPoint(pt.getId(), pos);
+	public void renderToImage() {
+
+		System.out.println("render to image");
+		KDTreeRendererZarr renderer = new KDTreeRendererZarr();
+		renderer.input = transformedPointsPath + "/points";
+		renderer.output = renderedImagePath;
+		renderer.radius = 4;
+		renderer.run(); 
 	}
 
 	@Override
@@ -211,12 +220,8 @@ public class MultiHypothesisZarr implements Runnable {
 
 		// get interest points
 		final List<InterestPoint> ipMoving = loadZarr(mvgZarrPath, subsamplingFactor);
-
-		List<InterestPoint> ipFixed = loadZarr(fixedZarrPath, subsamplingFactor);
+		final List<InterestPoint> ipFixed = loadZarr(fixedZarrPath, subsamplingFactor);
 		
-		System.out.println("FLOOR FIXED");
-		ipFixed = apply(ipFixed, x -> floor(x));
-
 		System.out.println("num moving pts: " + ipMoving.size());
 		System.out.println("num fixed pts: " + ipFixed.size());
 		System.out.println("");
@@ -225,31 +230,26 @@ public class MultiHypothesisZarr implements Runnable {
 
 		System.out.println("parameters:");
 		System.out.println("using model type: " + modelType);
-		System.out.println("");
-
 		System.out.println("numNeighbors " + numNeighbors);
 		System.out.println("redundancy " + redundancy);
 		System.out.println("ratioOfDistance " + ratioOfDistance);
-
 		System.out.println("limitSearchRadius " + limitSearchRadius);
 		System.out.println("searchRadius " + searchRadius);
 		System.out.println("minNumCorrespondences " + minNumCorrespondences);
 		System.out.println("numIterations " + numIterations);
 		System.out.println("maxEpsilon " + maxEpsilon);
 		System.out.println("minInlierRatio " + minInlierRatio);
-		
-		String pointImgPath = String.format("%s_%s-pts-vis-%s.png", baseDestination, modelType, imageOrientation);
 
+
+
+		transformedPointsPath = String.format("%s_transformed.zarr", baseDestination);
+		renderedImagePath = String.format("%s_transformed_image.tif", baseDestination);
 
 		Model model = getModel(modelType);
 
-		PrintWriter pointWriter;
 		PrintWriter modelWriter;
 		PrintWriter statsWriter;
 		try {
-
-			pointWriter = new PrintWriter(new FileWriter(
-					new File(String.format("%s_%s-pts.csv", baseDestination, modelType))));
 
 			modelWriter = new PrintWriter(new FileWriter(
 					new File(String.format("%s_%s-models.csv", baseDestination, modelType))));
@@ -261,7 +261,6 @@ public class MultiHypothesisZarr implements Runnable {
 			e.printStackTrace();
 			return;
 		}
-
 
 		final RGLDMMatcher<InterestPoint> matcher = new RGLDMMatcher<>();
 		List<PointMatchGeneric<InterestPoint>> candidates = matcher.extractCorrespondenceCandidates(
@@ -283,9 +282,9 @@ public class MultiHypothesisZarr implements Runnable {
 		final ArrayList<PointMatchGeneric<InterestPoint>> allMatches = new ArrayList<>();
 		final ArrayList<Integer> inlierSetSizes = new ArrayList<>();
 		final ArrayList<Stats> statsPerModel = new ArrayList<>();
+		final ArrayList<int[]> correspondenceIds = new ArrayList<>();
 
 		int consensusSetId = 0;
-
 		boolean multiConsenus = true;
 		boolean modelFound = false;
 		do {
@@ -310,7 +309,12 @@ public class MultiHypothesisZarr implements Runnable {
 				allMatches.addAll(inliers);
 				inlierSetSizes.add(inliers.size());
 
-				writeInliers(pointWriter, consensusSetId, inliers);
+				for (int i = 0; i < inliers.size(); i++) {
+					int id1 = inliers.get(i).getPoint1().getId();
+					int id2 = inliers.get(i).getPoint2().getId();
+					correspondenceIds.add(new int[]{id1, id2});
+				}
+
 				writeModel(modelWriter, consensusSetId, (AbstractAffineModel3D<?>)model);
 
 				final ArrayList<Double> errors = errors(model, inliers);
@@ -325,6 +329,7 @@ public class MultiHypothesisZarr implements Runnable {
 
 				if (multiConsenus)
 					candidates = removeInliers(candidates, inliers);
+
 			} else if (modelFound) {
 				System.out.println("Model found, but not enough points (" + inliers.size() + "/" + minNumCorrespondences + ").");
 			} else {
@@ -345,20 +350,30 @@ public class MultiHypothesisZarr implements Runnable {
 				statsPerModel.add(stats);
 				statsWriter.println(String.format("%d,%s", -1, stats.printCsvRow()));
 
-				writeBigWarpLandmarks(new File(baseDestination + "_landmarks_all.csv"), allMatches);
+				allLandmarksFile = new File(baseDestination + "_landmarks_all.csv");
+				writeBigWarpLandmarks(allLandmarksFile, allMatches);
+
+				if (applyToPoints) {
+					applyToPoints();
+				}
+
+				if (render) {
+					renderToImage();
+				}
+
 			}
 		} catch (NotEnoughDataPointsException e) {
 			e.printStackTrace();
 		} catch (IllDefinedDataPointsException e) {
 			e.printStackTrace();
 		}
-		
-		if (pointImgPath != null) {
+
+		if (visPoints) {
+			pointImgPath = String.format("%s_%s-pts-vis-%s.png", baseDestination, modelType, imageOrientation);
 			System.out.println("writing point image: " + pointImgPath);
 			PointPlotter.makeImage(pointImgPath, allMatches, inlierSetSizes, imageOrientation);
 		}
 
-		pointWriter.close();
 		modelWriter.close();
 		statsWriter.close();
 	}
@@ -403,26 +418,30 @@ public class MultiHypothesisZarr implements Runnable {
 			.mapToObj(Double::toString)
 			.collect(Collectors.joining(","));
 	}
+
+	public static void writeBigWarpLandmarks( File f, ArrayList<PointMatchGeneric<InterestPoint>> inliers ) {
+
+		// Bigwarp creates transforms from target space to moving space 
+		// because it applies the transformation to images
+		// 
+		// in this context we want the opposite,
+		// so swap the roles of moving and fixed when exporting
+
+		final LandmarkTableModel ltm = new LandmarkTableModel( 3 );
+		int i = 0;
+		for( final PointMatchGeneric<InterestPoint> match : inliers ) {
 	
-
-	public static void writeInliers(final PrintWriter writer, int id, List<PointMatchGeneric< InterestPoint >> inliers ) {
-
-		for (int i = 0; i < inliers.size(); i++) {
-
-			final double[] p1 = inliers.get(i).getP1().getL();
-			final double[] p2 = inliers.get(i).getP2().getL();
-
-			String line = String.format("%s,%s,%s,%s,%s", 
-					InterestPointsToCsv.quotes("Pt-"+i),
-					InterestPointsToCsv.quotes("true"),
-					InterestPointsToCsv.quotes(Integer.toString(id)),
-					InterestPointsToCsv.print(p1),
-					InterestPointsToCsv.print(p2));
-
-			writer.println(line);
+			ltm.add( match.getPoint2().getL(), match.getPoint1().getL() );
+			int id1 = match.getPoint2().getId();
+			int id2 = match.getPoint1().getId();
+			ltm.setColumnName(i, "Pt-" + i + "(" + id1 + "," + id2 + ")");
+			i++;
 		}
-
-		writer.flush();
+		try {
+			ltm.save( f );
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 	}
 	
 	public static AffineTransform3D getTransform( final SpimData data, final ViewId viewId )
@@ -459,12 +478,13 @@ public class MultiHypothesisZarr implements Runnable {
 		} ).collect( Collectors.toList() );
 	}
 
-	public static < P extends PointMatch > List< P > removeInliers( final List< P > candidates, final List< P > matches )
-	{
-		final HashSet< P > matchesSet = new HashSet<>( matches );
-		return candidates.stream().filter( c -> !matchesSet.contains( c ) ).collect( Collectors.toList() );
-	}
+	public static < P extends PointMatch > List< P > removeInliers( final List< P > candidates, final List< P > matches ) {
 
-	
+		System.out.println("removing inliers. num init candidates " + candidates.size());
+		final HashSet< P > matchesSet = new HashSet<>( matches );
+		List<P> res = candidates.stream().filter( c -> !matchesSet.contains( c ) ).collect( Collectors.toList() );
+		System.out.println("removing inliers. num init candidates " + res.size());
+		return res;
+	}
 
 }
