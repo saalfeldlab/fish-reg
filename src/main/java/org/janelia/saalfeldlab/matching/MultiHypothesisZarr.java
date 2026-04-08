@@ -9,6 +9,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.janelia.saalfeldlab.analysis.Stats;
@@ -25,7 +26,6 @@ import mpicbg.models.AffineModel3D;
 import mpicbg.models.IllDefinedDataPointsException;
 import mpicbg.models.Model;
 import mpicbg.models.NotEnoughDataPointsException;
-import mpicbg.models.PointMatch;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.TranslationModel3D;
 import mpicbg.spim.data.SpimData;
@@ -153,7 +153,7 @@ public class MultiHypothesisZarr implements Runnable {
 	public static <T extends RealType<T>> List<InterestPoint> loadZarr( String path, int subsamplingFactor ) {
 
 		final N5Reader zarr = new N5Factory().openReader(StorageFormat.ZARR, path);
-		
+
 		@SuppressWarnings("unchecked")
 		final Img<T> pointImg = (Img<T>)N5Utils.open(zarr, "");
 		final RandomAccess<T> ra = pointImg.randomAccess();
@@ -276,12 +276,14 @@ public class MultiHypothesisZarr implements Runnable {
 
 		// perform RANSAC (warning: not safe for multi-threaded over pairs of
 		// images, this needs point duplication)
-		final ArrayList<PointMatchGeneric<InterestPoint>> inliers = new ArrayList<>();
+		ArrayList<PointMatchGeneric<InterestPoint>> inliers = new ArrayList<>();
 
 		final ArrayList<PointMatchGeneric<InterestPoint>> allMatches = new ArrayList<>();
 		final ArrayList<Integer> inlierSetSizes = new ArrayList<>();
 		final ArrayList<Stats> statsPerModel = new ArrayList<>();
-		final ArrayList<int[]> correspondenceIds = new ArrayList<>();
+
+		final HashSet<Integer> movingIds = new HashSet<>();
+		final HashSet<Integer> fixedIds = new HashSet<>();
 
 		int consensusSetId = 0;
 		boolean multiConsenus = true;
@@ -294,12 +296,14 @@ public class MultiHypothesisZarr implements Runnable {
 						inliers,
 						numIterations,
 						maxEpsilon, minInlierRatio);
+
 			} catch (NotEnoughDataPointsException e) {
 				System.out.println("Not enough points for matching. stopping.");
 				break;
 			}
 
 			if (modelFound && inliers.size() >= minNumCorrespondences) {
+
 				// highly suggested in general
 				// inliers = RANSAC.removeInconsistentMatches( inliers );
 
@@ -307,11 +311,9 @@ public class MultiHypothesisZarr implements Runnable {
 
 				allMatches.addAll(inliers);
 				inlierSetSizes.add(inliers.size());
-
 				for (int i = 0; i < inliers.size(); i++) {
-					int id1 = inliers.get(i).getPoint1().getId();
-					int id2 = inliers.get(i).getPoint2().getId();
-					correspondenceIds.add(new int[]{id1, id2});
+					movingIds.add(inliers.get(i).getPoint1().getId());
+					fixedIds.add(inliers.get(i).getPoint2().getId());
 				}
 
 				writeModel(modelWriter, consensusSetId, (AbstractAffineModel3D<?>)model);
@@ -327,7 +329,7 @@ public class MultiHypothesisZarr implements Runnable {
 				consensusSetId++;
 
 				if (multiConsenus)
-					candidates = removeInliers(candidates, inliers);
+					candidates = removeInliers(candidates, inliers, movingIds, fixedIds);
 
 			} else if (modelFound) {
 				System.out.println("Model found, but not enough points (" + inliers.size() + "/" + minNumCorrespondences + ").");
@@ -477,12 +479,36 @@ public class MultiHypothesisZarr implements Runnable {
 		} ).collect( Collectors.toList() );
 	}
 
-	public static < P extends PointMatch > List< P > removeInliers( final List< P > candidates, final List< P > matches ) {
+	public static List<PointMatchGeneric<InterestPoint>> removeInliers(
+			final List<PointMatchGeneric<InterestPoint>> candidates, 
+			final List<PointMatchGeneric<InterestPoint>> matches,
+			final Set<Integer> movingIds, final Set<Integer> fixedIds) {
 
 		System.out.println("removing inliers. num init candidates " + candidates.size());
-		final HashSet< P > matchesSet = new HashSet<>( matches );
-		List<P> res = candidates.stream().filter( c -> !matchesSet.contains( c ) ).collect( Collectors.toList() );
-		System.out.println("removing inliers. num init candidates " + res.size());
+		final HashSet<PointMatchGeneric<InterestPoint>> matchesSet = new HashSet<>(matches);
+		
+		// not only do we have to remove candidates, but we also need to remove
+		// other candidates that use the same points.
+		// so track the ids of points that have been used
+		for (final PointMatchGeneric<InterestPoint> match : matches) {
+			movingIds.add(match.getPoint1().getId());
+			fixedIds.add(match.getPoint2().getId());
+		}	
+
+		final ArrayList<PointMatchGeneric<InterestPoint>> res = new ArrayList<>();
+		for (int i = 0; i < candidates.size(); i++) {
+
+			final PointMatchGeneric<InterestPoint> match = candidates.get(i);
+			final boolean hasConflictingId = 
+					movingIds.contains(match.getPoint1().getId()) ||
+					fixedIds.contains(match.getPoint2().getId());
+
+			if( !matchesSet.contains(match) && !hasConflictingId) {
+				res.add(match);
+			}
+		}
+
+		System.out.println("removing inliers. num final candidates " + res.size());
 		return res;
 	}
 
