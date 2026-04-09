@@ -113,6 +113,9 @@ public class MultiHypothesisZarr implements Runnable {
 	@Option( names = { "--render" }, required = false )
 	boolean render;
 
+	@Option( names = { "--allow-duplicate-matches" }, negatable =  true, required = false )
+	boolean allowDuplicateMatches;
+
 	@Option( names = { "--vis-points" }, required = false )
 	boolean visPoints;
 
@@ -479,7 +482,7 @@ public class MultiHypothesisZarr implements Runnable {
 		} ).collect( Collectors.toList() );
 	}
 
-	public static List<PointMatchGeneric<InterestPoint>> removeInliers(
+	public List<PointMatchGeneric<InterestPoint>> removeInliers(
 			final List<PointMatchGeneric<InterestPoint>> candidates, 
 			final List<PointMatchGeneric<InterestPoint>> matches,
 			final Set<Integer> movingIds, final Set<Integer> fixedIds) {
@@ -499,11 +502,10 @@ public class MultiHypothesisZarr implements Runnable {
 		for (int i = 0; i < candidates.size(); i++) {
 
 			final PointMatchGeneric<InterestPoint> match = candidates.get(i);
-			final boolean hasConflictingId = 
-					movingIds.contains(match.getPoint1().getId()) ||
+			final boolean hasConflictingId = movingIds.contains(match.getPoint1().getId()) ||
 					fixedIds.contains(match.getPoint2().getId());
 
-			if( !matchesSet.contains(match) && !hasConflictingId) {
+			if( !matchesSet.contains(match) && (allowDuplicates || !hasConflictingId)) {
 				res.add(match);
 			}
 		}
