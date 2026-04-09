@@ -505,7 +505,7 @@ public class MultiHypothesisZarr implements Runnable {
 			final boolean hasConflictingId = movingIds.contains(match.getPoint1().getId()) ||
 					fixedIds.contains(match.getPoint2().getId());
 
-			if( !matchesSet.contains(match) && (allowDuplicates || !hasConflictingId)) {
+			if( !matchesSet.contains(match) && (allowDuplicateMatches || !hasConflictingId)) {
 				res.add(match);
 			}
 		}
