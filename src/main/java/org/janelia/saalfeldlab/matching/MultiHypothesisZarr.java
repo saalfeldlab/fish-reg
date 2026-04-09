@@ -241,8 +241,9 @@ public class MultiHypothesisZarr implements Runnable {
 		System.out.println("numIterations " + numIterations);
 		System.out.println("maxEpsilon " + maxEpsilon);
 		System.out.println("minInlierRatio " + minInlierRatio);
-
-
+		System.out.println("allow duplicate matches" + allowDuplicateMatches);
+		System.out.println("apply" + applyToPoints);
+		System.out.println("render" + render);
 
 		transformedPointsPath = String.format("%s_transformed.zarr", baseDestination);
 		renderedImagePath = String.format("%s_transformed_image.tif", baseDestination);
