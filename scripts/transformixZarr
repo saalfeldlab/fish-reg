@@ -1,0 +1,49 @@
+#!/bin/bash
+
+BASEDIR=$(dirname "$0")
+convertExe=${BASEDIR}/convertElastix
+
+keep=false
+while getopts "i:o:t:k" opt; do
+	case $opt in
+		i) zarrIn="$OPTARG" ;;
+		o) zarrOut="$OPTARG" ;;
+		t) transform="$OPTARG" ;;
+		k) keep=true ;;
+		*) echo "Usage: $0 -i <input zarr> -o <output zarr> -t <elastix transform> [-k]"; exit 1 ;;
+	esac
+done
+
+if [ -z "$zarrIn" ] || [ -z "$zarrOut" ] || [ -z "$transform" ]; then
+	echo "Usage: $0 -i <input zarr> -o <output zarr> -t <elastix transform>"
+	exit 1
+fi
+
+tmpDir=$(mktemp -d)
+if $keep; then
+	echo "Keeping temp files in: $tmpDir"
+else
+	trap "rm -rf $tmpDir" EXIT
+fi
+
+tmpIn=${tmpDir}/points_in.txt
+tmpOutDir=${tmpDir}/transformix_out
+mkdir -p "$tmpOutDir"
+
+# Zarr → transformix text
+$convertExe -i "$zarrIn" -o "$tmpIn"
+
+# run transformix
+transformix -def "$tmpIn" -tp "$transform" -out "$tmpOutDir"
+
+# parse OutputPoint values from transformix's verbose output into simple text format
+outPts=${tmpOutDir}/outputpoints.txt
+N=$(wc -l < "$outPts")
+tmpParsed=${tmpDir}/points_out.txt
+
+echo "point"  > "$tmpParsed"
+echo "$N"     >> "$tmpParsed"
+awk -F'OutputPoint = \\[ ' 'NF>1 { sub(/ \].*/, "", $2); print $2 }' "$outPts" >> "$tmpParsed"
+
+# transformix text → Zarr
+$convertExe -i "$tmpParsed" -o "$zarrOut"
