@@ -22,12 +22,14 @@ finetune = extract_pairs(file_b)
 only_orig = sorted(orig - finetune)
 only_finetune = sorted(finetune - orig)
 both = sorted(orig & finetune)
+fraction_of_orig = len(both) / len(orig)
 
 print(f"Total in {file_a}:     {len(orig)}")
 print(f"Total in {file_b}: {len(finetune)}")
 print(f"In both:           {len(both)}")
 print(f"Only in orig:      {len(only_orig)}")
 print(f"Only in finetune:  {len(only_finetune)}")
+print(f"Fraction orig repeated:  {fraction_of_orig}")
 
 if only_orig:
     print(f"\nPairs only in {file_a}:")
