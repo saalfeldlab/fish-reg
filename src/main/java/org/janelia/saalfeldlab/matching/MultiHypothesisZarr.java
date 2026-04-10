@@ -370,6 +370,8 @@ public class MultiHypothesisZarr implements Runnable {
 			saveCandidates(candidatesOut, candidates);
 		}
 
+		candidates = pruneDuplicates(candidates);
+
 		// perform RANSAC (warning: not safe for multi-threaded over pairs of
 		// images, this needs point duplication)
 		ArrayList<PointMatchGeneric<InterestPoint>> inliers = new ArrayList<>();
@@ -605,6 +607,28 @@ public class MultiHypothesisZarr implements Runnable {
 
 		System.out.println("removing inliers. num final candidates " + res.size());
 		return res;
+	}
+
+	public List<PointMatchGeneric<InterestPoint>> pruneDuplicates(
+			final List<PointMatchGeneric<InterestPoint>> candidates) {
+
+		final HashSet<Integer> movingIds = new HashSet<>();
+		final HashSet<Integer> fixedIds = new HashSet<>();
+
+		final List<PointMatchGeneric<InterestPoint>> consistendCandidates = new ArrayList<>();
+		for (int i = 0; i < candidates.size(); i++) {
+
+			final PointMatchGeneric<InterestPoint> match = candidates.get(i);
+			final boolean hasConflictingId = movingIds.contains(match.getPoint1().getId()) ||
+					fixedIds.contains(match.getPoint2().getId());
+
+			if( !hasConflictingId) {
+				consistendCandidates.add(match);
+				movingIds.add(match.getPoint1().getId());
+				fixedIds.add(match.getPoint2().getId());
+			}
+		}
+		return consistendCandidates;
 	}
 
 }
