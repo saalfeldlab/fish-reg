@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Usage: ./detectDuplicates input.csv
+
+
+awk -F'"' '
+{
+    # Extract the label field (column 1 after stripping quotes)
+    label = $2
+
+    # Pull out the two numbers inside parentheses
+    match(label, /\(([0-9]+),([0-9]+)\)/, arr)
+    n1 = arr[1]
+    n2 = arr[2]
+
+    # Store the full line and both numbers per row index
+    lines[NR]  = $0
+    first[NR]  = n1
+    second[NR] = n2
+
+    # Track how many rows each number appears in
+    count1[n1]++
+    count2[n2]++
+
+    # Record which rows each number appears in (for reporting)
+    rows1[n1] = (n1 in rows1) ? rows1[n1] "," NR : NR
+    rows2[n2] = (n2 in rows2) ? rows2[n2] "," NR : NR
+}
+END {
+    found = 0
+    for (i = 1; i <= NR; i++) {
+        n1 = first[i]
+        n2 = second[i]
+        reason = ""
+
+        if (count1[n1] > 1)
+            reason = reason sprintf("  first number %s duplicated on rows: %s\n", n1, rows1[n1])
+        if (count2[n2] > 1)
+            reason = reason sprintf("  second number %s duplicated on rows: %s\n", n2, rows2[n2])
+
+        if (reason != "") {
+            print "Row " i ": " lines[i]
+            printf "%s", reason
+            found++
+        }
+    }
+    if (found == 0)
+        print "No duplicate numbers found inside parentheses."
+}
+' $1
+
