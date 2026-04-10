@@ -14,6 +14,8 @@ import java.util.stream.Collectors;
 
 import org.janelia.saalfeldlab.analysis.Stats;
 import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.blosc.BloscCompression;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
@@ -35,8 +37,13 @@ import net.imglib2.Interval;
 import net.imglib2.RandomAccess;
 import net.imglib2.RealPoint;
 import net.imglib2.img.Img;
+import net.imglib2.img.array.ArrayImg;
+import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.img.array.ArrayRandomAccess;
+import net.imglib2.img.basictypeaccess.array.IntArray;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.RealType;
+import net.imglib2.type.numeric.integer.IntType;
 import net.imglib2.util.Intervals;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -70,6 +77,14 @@ public class MultiHypothesisZarr implements Runnable {
 
 	@Option( names = { "-d", "--destination" }, required = true )
 	String baseDestination;
+
+	@Option( names = { "-co", "--output-candidates" }, required = false, 
+			description="Zarr path to save candidate matches." )
+	String candidatesOut;
+
+	@Option( names = { "-ci", "--input-candidates" }, required = false, 
+			description="Zarr path to load candidate matches from." )
+	String candidatesIn;
 
 	@Option( names = { "-t", "--model-type" }, required = true )
 	String modelType;
@@ -155,22 +170,87 @@ public class MultiHypothesisZarr implements Runnable {
 
 	public static <T extends RealType<T>> List<InterestPoint> loadZarr( String path, int subsamplingFactor ) {
 
-		final N5Reader zarr = new N5Factory().openReader(StorageFormat.ZARR, path);
-
-		@SuppressWarnings("unchecked")
-		final Img<T> pointImg = (Img<T>)N5Utils.open(zarr, "");
-		final RandomAccess<T> ra = pointImg.randomAccess();
-
-		final int nd = (int)pointImg.dimension(DIM);
-		final int N = (int)pointImg.dimension(IDX);
-		System.out.println(Intervals.toString(pointImg));
-		
 		ArrayList<InterestPoint> points = new ArrayList<>();
-		for( int i = 0; i < N; i+= subsamplingFactor ) {
-			points.add(new InterestPoint(i, getPoint(nd, i, ra)));
+		try( final N5Reader zarr = new N5Factory().openReader(StorageFormat.ZARR, path) ) {
+			@SuppressWarnings("unchecked")
+			final Img<T> pointImg = (Img<T>)N5Utils.open(zarr, "");
+			final RandomAccess<T> ra = pointImg.randomAccess();
+
+			final int nd = (int)pointImg.dimension(DIM);
+			final int N = (int)pointImg.dimension(IDX);
+			System.out.println(Intervals.toString(pointImg));
+			for( int i = 0; i < N; i+= subsamplingFactor ) {
+				points.add(new InterestPoint(i, getPoint(nd, i, ra)));
+			}
 		}
 
 		return points;
+	}
+
+	public static List<PointMatchGeneric<InterestPoint>> loadCandidates(
+			final String candidatesZarrPath,
+			final List<InterestPoint> movingPoints,
+			final List<InterestPoint> fixedPoints) {
+
+		try (final N5Reader zarr = new N5Factory().openReader(StorageFormat.ZARR, candidatesZarrPath)) {
+			return loadCandidates(N5Utils.open(zarr, ""), movingPoints, fixedPoints);
+		}
+	}
+
+	public static List<PointMatchGeneric<InterestPoint>> loadCandidates(
+			final Img<IntType> matches,
+			final List<InterestPoint> movingPoints,
+			final List<InterestPoint> fixedPoints) {
+
+		final Map<Integer, InterestPoint> movingById = movingPoints.stream()
+				.collect(Collectors.toMap(InterestPoint::getId, p -> p));
+		final Map<Integer, InterestPoint> fixedById = fixedPoints.stream()
+				.collect(Collectors.toMap(InterestPoint::getId, p -> p));
+
+		final int N = (int) matches.dimension(IDX);
+		final RandomAccess<IntType> ra = matches.randomAccess();
+		final List<PointMatchGeneric<InterestPoint>> candidates = new ArrayList<>();
+
+		for (int i = 0; i < N; i++) {
+			ra.setPosition(0, DIM);
+			ra.setPosition(i, IDX);
+			final int movingId = ra.get().get();
+
+			ra.fwd(DIM);
+			final int fixedId = ra.get().get();
+
+			final InterestPoint movingPt = movingById.get(movingId);
+			final InterestPoint fixedPt = fixedById.get(fixedId);
+
+			if (movingPt != null && fixedPt != null)
+				candidates.add(new PointMatchGeneric<>(movingPt, fixedPt));
+		}
+
+		return candidates;
+	}
+
+	public static void saveCandidates( String path, List<PointMatchGeneric<InterestPoint>> candidates  ) {
+
+		final int N = candidates.size();
+		final ArrayImg<IntType, IntArray> img = ArrayImgs.ints(2, N);
+		final ArrayRandomAccess<IntType> ra = img.randomAccess();
+		for (int i = 0; i < N; i++) {
+
+			final PointMatchGeneric<InterestPoint> match = candidates.get(i);
+			final int id1 = match.getPoint1().getId();
+			final int id2 = match.getPoint2().getId();
+
+			ra.setPosition(0, DIM);
+			ra.setPosition(i, IDX);
+
+			ra.get().set(id1);
+			ra.fwd(DIM);
+			ra.get().set(id2);
+		}
+
+		try (final N5Writer zarr = new N5Factory().openWriter(StorageFormat.ZARR, path)) {
+			N5Utils.save(img, zarr, "", new int[]{2, N}, new BloscCompression());
+		}
 	}
 
 	private static <T extends RealType<T>>  double[] getPoint(int nd, int i, RandomAccess<T> ra) {
@@ -265,18 +345,30 @@ public class MultiHypothesisZarr implements Runnable {
 			return;
 		}
 
-		final RGLDMMatcher<InterestPoint> matcher = new RGLDMMatcher<>();
-		List<PointMatchGeneric<InterestPoint>> candidates = matcher.extractCorrespondenceCandidates(
-				ipMoving,
-				ipFixed,
-				numNeighbors,
-				redundancy,
-				ratioOfDistance,
-				Float.MAX_VALUE,
-				limitSearchRadius,
-				searchRadius);
+		List<PointMatchGeneric<InterestPoint>> candidates; 
 
-		System.out.println("Found " + candidates.size() + " correspondence candidates.");
+		final RGLDMMatcher<InterestPoint> matcher = new RGLDMMatcher<>();
+		if( candidatesIn != null) {
+			candidates = loadCandidates(candidatesIn, ipMoving, ipFixed);
+			System.out.println("Loaded " + candidates.size() + " correspondence candidates.");
+		} else {
+			candidates = matcher.extractCorrespondenceCandidates(
+					ipMoving,
+					ipFixed,
+					numNeighbors,
+					redundancy,
+					ratioOfDistance,
+					Float.MAX_VALUE,
+					limitSearchRadius,
+					searchRadius);
+
+			System.out.println("Found " + candidates.size() + " correspondence candidates.");
+		}
+
+		if( candidatesOut != null ) {
+			System.out.println("saving candidates to  " + candidatesOut);
+			saveCandidates(candidatesOut, candidates);
+		}
 
 		// perform RANSAC (warning: not safe for multi-threaded over pairs of
 		// images, this needs point duplication)
